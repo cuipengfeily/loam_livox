@@ -612,8 +612,10 @@ class Laser_mapping
                 m_maximum_pt_time_stamp = max_t;
                 m_last_time_stamp = max_t;
                 reset_incremtal_parameter();
-                printf( "****** min max timestamp = [%.6f, %.6f] ****** \r\n", m_minimum_pt_time_stamp, m_maximum_pt_time_stamp );
 
+
+                //100 * 100 * 100的 CUBE， 每个CUBE长宽高都是 50 米
+                //为什么要 加上 m_para_laser_cloud_center_width 这个数值,这是因为计算索引都是正整数，需要统一向右平移50个 CUBE，也即2500米
                 int centerCubeI = int( ( m_t_w_curr.x() + CUBE_W / 2 ) / CUBE_W ) + m_para_laser_cloud_center_width;
                 int centerCubeJ = int( ( m_t_w_curr.y() + CUBE_H / 2 ) / CUBE_H ) + m_para_laser_cloud_center_height;
                 int centerCubeK = int( ( m_t_w_curr.z() + CUBE_D / 2 ) / CUBE_D ) + m_para_laser_cloud_center_depth;
@@ -627,7 +629,11 @@ class Laser_mapping
                 if ( m_t_w_curr.z() + CUBE_D / 2 < 0 )
                     centerCubeK--;
 
-                while ( centerCubeI < 3 )
+                //printf( "****** min max timestamp = [%.6f, %.6f] ****** \r\n", m_minimum_pt_time_stamp, m_maximum_pt_time_stamp );
+                printf( "****** min max timestamp = [%.6f, %.6f] [%d %d %d]****** \r\n", m_minimum_pt_time_stamp, m_maximum_pt_time_stamp,centerCubeI, centerCubeJ, centerCubeK);
+
+                //这几个循环语句 是作为调整CUBE中心用的， 如果地图增的太大，超出了100 * 100 * 100 CUBE 的范围，那么需要我们将整体CUBE的中心移动一下，删除太老的区域， 添加新的空区域，同时还保证了总体数据量不变
+                while ( centerCubeI < 3 )//如果左下角不够用了，需要删除右上角的区域，给左下角用
                 {
                     for ( int j = 0; j < m_para_laser_cloud_height; j++ )
                     {
@@ -660,7 +666,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_width++;
                 }
 
-                while ( centerCubeI >= m_para_laser_cloud_width - 3 )
+                while ( centerCubeI >= m_para_laser_cloud_width - 3 )//如果右上角不够用了，需要删除左下角的区域，给右上角用
                 {
                     for ( int j = 0; j < m_para_laser_cloud_height; j++ )
                     {
@@ -693,7 +699,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_width--;
                 }
 
-                while ( centerCubeJ < 3 )
+                while ( centerCubeJ < 3 )//如果Y负向不够用了，需要删除Y正向的区域，给Y负向用
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -726,7 +732,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_height++;
                 }
 
-                while ( centerCubeJ >= m_para_laser_cloud_height - 3 )
+                while ( centerCubeJ >= m_para_laser_cloud_height - 3 )//如果Y正向不够用了，需要删除Y负向的区域，给Y正向用
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -759,7 +765,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_height--;
                 }
 
-                while ( centerCubeK < 3 )
+                while ( centerCubeK < 3 )//如果Z负向不够用了，需要删除Z正向的区域，给Z负向用
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -792,7 +798,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_depth++;
                 }
 
-                while ( centerCubeK >= m_para_laser_cloud_depth - 3 )
+                while ( centerCubeK >= m_para_laser_cloud_depth - 3 )//如果Z正向不够用了，需要删除Z负向的区域，给Z正向用
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -828,6 +834,7 @@ class Laser_mapping
                 int laserCloudValidNum = 0;
                 int laserCloudSurroundNum = 0;
 
+                // CUBE(I,J,K)周围 5 x 5 x 3范围的为相邻CUBE
                 for ( int i = centerCubeI - 2; i <= centerCubeI + 2; i++ )
                 {
                     for ( int j = centerCubeJ - 2; j <= centerCubeJ + 2; j++ )
@@ -847,6 +854,7 @@ class Laser_mapping
                     }
                 }
 
+                //MAP中的角点和平面点,从相邻的cube中取出所有的角点和面点，认为是MAP点
                 m_laser_cloud_corner_from_map->clear();
                 m_laser_cloud_surf_from_map->clear();
 
@@ -859,11 +867,13 @@ class Laser_mapping
                 int laserCloudCornerFromMapNum = m_laser_cloud_corner_from_map->points.size();
                 int laserCloudSurfFromMapNum = m_laser_cloud_surf_from_map->points.size();
 
+                //对最新数据帧的角点 滤波
                 pcl::PointCloud<PointType>::Ptr laserCloudCornerStack( new pcl::PointCloud<PointType>() );
                 m_down_sample_filter_corner.setInputCloud( m_laser_cloud_corner_last );
                 m_down_sample_filter_corner.filter( *laserCloudCornerStack );
                 int laser_corner_pt_num = laserCloudCornerStack->points.size();
 
+                //对最新数据帧中的平面点 滤波
                 pcl::PointCloud<PointType>::Ptr laserCloudSurfStack( new pcl::PointCloud<PointType>() );
                 m_down_sample_filter_surface.setInputCloud( m_laser_cloud_surf_last );
                 m_down_sample_filter_surface.filter( *laserCloudSurfStack );
@@ -881,11 +891,14 @@ class Laser_mapping
                 int                    corner_rejection_num = 0;
                 int                    surface_rejecetion_num = 0;
                 int                    if_undistore_in_matching = 1;
+
+                //局部MAP中的角点和平面点数量满足阈值时，计算
                 if ( laserCloudCornerFromMapNum > CORNER_MIN_MAP_NUM && laserCloudSurfFromMapNum > SURFACE_MIN_MAP_NUM && frameCount > m_mapping_init_accumulate_frames )
                 {
                     m_kdtree_corner_from_map->setInputCloud( m_laser_cloud_corner_from_map );
                     m_kdtree_surf_from_map->setInputCloud( m_laser_cloud_surf_from_map );
 
+                    //ICP最大迭代次数
                     for ( int iterCount = 0; iterCount < m_para_icp_max_iterations; iterCount++ )
                     {
                         corner_avail_num = 0;
@@ -903,19 +916,23 @@ class Laser_mapping
                         problem.AddParameterBlock( m_para_buffer_incremental, 4, q_parameterization );
                         problem.AddParameterBlock( m_para_buffer_incremental + 4, 3 );
 
+                        //计算角点残茶
                         for ( int i = 0; i < laser_corner_pt_num; i++ )
                         {
                             pointOri = laserCloudCornerStack->points[ i ];
+                            //通过平移旋转消除 运动失真
                             pointAssociateToMap( &pointOri, &pointSel, refine_blur( pointOri.intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), if_undistore_in_matching );
 
+                            //在MAP中寻找5个最近邻点
                             m_kdtree_corner_from_map->nearestKSearch( pointSel, line_search_num, m_point_search_Idx, m_point_search_sq_dis );
 
+                            //最近邻点的距离平方要求小于2
                             if ( m_point_search_sq_dis[ line_search_num - 1 ] < 2.0 )
                             {
                                 bool                         line_is_avail = true;
                                 std::vector<Eigen::Vector3d> nearCorners;
                                 Eigen::Vector3d              center( 0, 0, 0 );
-                                if ( IF_LINE_FEATURE_CHECK )
+                                if ( /*IF_LINE_FEATURE_CHECK*/ 1 )//邻近点是否在近似一条线上
                                 {
                                     for ( int j = 0; j < line_search_num; j++ )
                                     {
@@ -955,10 +972,10 @@ class Laser_mapping
 
                                 if ( line_is_avail )
                                 {
-                                    if ( ICP_LINE )
+                                    if ( ICP_LINE )// 1
                                     {
                                         ceres::CostFunction *cost_function;
-                                        if ( MOTION_DEBLUR )
+                                        if ( MOTION_DEBLUR )// 1
                                         {
                                             cost_function = ceres_icp_point2line<double>::Create( curr_point,
                                                                                                   pcl_pt_to_eigend( m_laser_cloud_corner_from_map->points[ m_point_search_Idx[ 0 ] ] ),
@@ -988,6 +1005,7 @@ class Laser_mapping
                             }
                         }
 
+                        //计算平面点残茶
                         for ( int i = 0; i < laser_surface_pt_num; i++ )
                         {
 
@@ -995,12 +1013,14 @@ class Laser_mapping
                             int planeValid = true;
                             pointAssociateToMap( &pointOri, &pointSel, refine_blur( pointOri.intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), if_undistore_in_matching );
 
+                            //5个最近邻平面点
                             m_kdtree_surf_from_map->nearestKSearch( pointSel, plane_search_num, m_point_search_Idx, m_point_search_sq_dis );
+                            //最近邻平面点距离平方的阈值为 10m
                             if ( m_point_search_sq_dis[ plane_search_num - 1 ] < 10.0 )
                             {
                                 std::vector<Eigen::Vector3d> nearCorners;
                                 Eigen::Vector3d              center( 0, 0, 0 );
-                                if ( IF_PLANE_FEATURE_CHECK )
+                                if ( IF_PLANE_FEATURE_CHECK )// 0
                                 {
                                     for ( int j = 0; j < plane_search_num; j++ )
                                     {
@@ -1036,13 +1056,13 @@ class Laser_mapping
 
                                 Eigen::Vector3d curr_point( pointOri.x, pointOri.y, pointOri.z );
 
-                                if ( planeValid )
+                                if ( planeValid )// 1
                                 {
-                                    if ( ICP_PLANE )
+                                    if ( ICP_PLANE )// 1
                                     {
                                         ceres::CostFunction *cost_function;
 
-                                        if ( MOTION_DEBLUR )
+                                        if ( MOTION_DEBLUR )//1
                                         {
 
                                             cost_function = ceres_icp_point2plane<double>::Create(
@@ -1132,7 +1152,7 @@ class Laser_mapping
 
                             residual_block_ids = residual_block_ids_bak;
                         }
-                        options.max_num_iterations = m_para_cere_max_iterations;
+                        options.max_num_iterations = m_para_cere_max_iterations;//5
                         set_ceres_solver_bound( problem );
                         ceres::Solve( options, &problem, &summary );
                         if ( MOTION_DEBLUR )
@@ -1145,7 +1165,7 @@ class Laser_mapping
 
                         // *( g_file_logger.get_ostream() ) << "Res: " << summary.BriefReport() << endl;
 
-                        angular_diff = ( float ) m_q_w_curr.angularDistance( m_q_w_last ) * 57.3;
+                        angular_diff = ( float ) m_q_w_curr.angularDistance( m_q_w_last ) * 57.3;//57.3 is degree/rad
                         t_diff = ( m_t_w_curr - m_t_w_last ).norm();
                         minimize_cost = summary.final_cost;
                     }
@@ -1206,6 +1226,7 @@ class Laser_mapping
                     m_pub_last_corner_pts.publish( laserCloudMsg );
                 }
 
+                //对每个角点计算点的cube 编号，然后将点放入 cube中
                 for ( int i = 0; i < laser_corner_pt_num; i++ )
                 {
                     //if ( MOTION_DEBLUR && ( laserCloudSurfStack->points[ i ].intensity < m_para_min_match_blur ) )
@@ -1234,6 +1255,7 @@ class Laser_mapping
                     }
                 }
 
+                //对每个平面点计算点的cube 编号，然后将点放入 cube中
                 for ( int i = 0; i < laser_surface_pt_num; i++ )
                 {
                     //*( m_file_logger.get_ostream() ) << __FILE__ << " --- " << __LINE__ << endl;
@@ -1261,6 +1283,7 @@ class Laser_mapping
                     }
                 }
 
+                //对每一个邻近点 cube 降采样
                 for ( int i = 0; i < laserCloudValidNum; i++ )
                 {
                     int ind = m_laser_cloud_valid_Idx[ i ];
@@ -1283,7 +1306,7 @@ class Laser_mapping
                 }
 
                 //publish surround map for every 5 frame
-                if ( PUB_SURROUND_PTS )
+                if ( /*PUB_SURROUND_PTS*/0 )
                 {
                     if ( frameCount % 500 == 0 )
                     {
@@ -1326,6 +1349,7 @@ class Laser_mapping
                     }
                 }
 
+                //配准到全局坐标系之后发布出去
                 int laserCloudFullResNum = m_laser_cloud_full_res->points.size();
 
                 for ( int i = 0; i < laserCloudFullResNum; i++ )
@@ -1343,6 +1367,7 @@ class Laser_mapping
                     m_pcl_tools_aftmap.save_to_pcd_files( "aft_mapp", *m_laser_cloud_full_res, 1 );
                 }
 
+                //时间为 零， ？？？
                 nav_msgs::Odometry odomAftMapped;
                 odomAftMapped.header.frame_id = "/camera_init";
                 odomAftMapped.child_frame_id = "/aft_mapped";

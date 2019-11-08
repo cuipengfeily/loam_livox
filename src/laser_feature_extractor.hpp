@@ -250,7 +250,7 @@ class Laser_feature
             std::fill( scanStartInd.begin(), scanStartInd.end(), 0 );
             std::fill( scanEndInd.begin(), scanEndInd.end(), 0 );
 
-            if ( m_if_pub_debug_feature )
+            if ( m_if_pub_debug_feature )// 1
             {
                 /********************************************
                 *    Feature extraction for livox lidar     *
@@ -516,7 +516,7 @@ class Laser_feature
         }
 //printf_line;
 
-#if !IF_LIVOX_HANDLER_REMOVE
+#if !IF_LIVOX_HANDLER_REMOVE // 0
         if ( m_lidar_type != 0 )
         //if(1)
         {

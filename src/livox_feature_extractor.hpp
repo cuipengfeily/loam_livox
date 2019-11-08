@@ -487,13 +487,13 @@ class Livox_laser
                  !std::isfinite( laserCloudIn.points[ idx ].y ) ||
                  !std::isfinite( laserCloudIn.points[ idx ].z ) )
             {
-                add_mask_of_point( pt_info, e_pt_nan );
+                add_mask_of_point( pt_info, e_pt_nan );//无效点
                 continue;
             }
 
             if ( laserCloudIn.points[ idx ].x == 0 )
             {
-                if ( idx == 0 )
+                if ( idx == 0 )//第一个点为什么一定不能为0,是因为要计算下面的 laserCloudIn.points[ idx ].y / laserCloudIn.points[ idx ].x吗，
                 {
                     // TODO: handle this case.
                     std::cout << "First point should be normal!!!" << std::endl;
@@ -511,14 +511,17 @@ class Livox_laser
 
             m_map_pt_idx.insert( std::make_pair( laserCloudIn.points[ idx ], pt_info ) );
 
+            //x*x + y * y + z * z
             pt_info->depth_sq2 = depth2_xyz( laserCloudIn.points[ idx ].x, laserCloudIn.points[ idx ].y, laserCloudIn.points[ idx ].z );
 
             //cout << "eval_point: d = " << pts_depth[ idx ] << " , " << laserCloudIn.points[ idx ].x << " , " << laserCloudIn.points[ idx ].y << " , " << laserCloudIn.points[ idx ].z << endl;
             pt_info->pt_2d_img << laserCloudIn.points[ idx ].y / laserCloudIn.points[ idx ].x, laserCloudIn.points[ idx ].z / laserCloudIn.points[ idx ].x;
             pt_info->polar_dis_sq2 = dis2_xy( pt_info->pt_2d_img( 0 ), pt_info->pt_2d_img( 1 ) );
 
+            //打上标签，距离过短或者反射率过小
             eval_point( pt_info );
 
+            //扫描视场的边界点，扫瞄线斜率变化过快的点
             if ( pt_info->polar_dis_sq2 > m_max_edge_polar_pos )
             {
                 add_mask_of_point( pt_info, e_pt_circle_edge, 2 );
@@ -539,7 +542,7 @@ class Livox_laser
                     pt_info->polar_direction = -1;
                 }
 
-                if ( pt_info->polar_direction == -1 && m_pts_info_vec[ idx - 1 ].polar_direction == 1 )
+                if ( pt_info->polar_direction == -1 && m_pts_info_vec[ idx - 1 ].polar_direction == 1 )/*这样的点 /\0 */
                 {
                     if ( edge_idx.size() == 0 || ( idx - split_idx[ split_idx.size() - 1 ] ) > 50 )
                     {
@@ -549,7 +552,7 @@ class Livox_laser
                     }
                 }
 
-                if ( pt_info->polar_direction == 1 && m_pts_info_vec[ idx - 1 ].polar_direction == -1 )
+                if ( pt_info->polar_direction == 1 && m_pts_info_vec[ idx - 1 ].polar_direction == -1 )/* /这样的点 \/ */
                 {
                     if ( zero_idx.size() == 0 || ( idx - split_idx[ split_idx.size() - 1 ] ) > 50 )
                     {
