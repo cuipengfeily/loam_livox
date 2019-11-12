@@ -487,13 +487,13 @@ class Livox_laser
                  !std::isfinite( laserCloudIn.points[ idx ].y ) ||
                  !std::isfinite( laserCloudIn.points[ idx ].z ) )
             {
-                add_mask_of_point( pt_info, e_pt_nan );//ÎŞĞ§µã
+                add_mask_of_point( pt_info, e_pt_nan );//æ— æ•ˆç‚¹
                 continue;
             }
 
             if ( laserCloudIn.points[ idx ].x == 0 )
             {
-                if ( idx == 0 )//µÚÒ»¸öµãÎªÊ²Ã´Ò»¶¨²»ÄÜÎª0,ÊÇÒòÎªÒª¼ÆËãÏÂÃæµÄ laserCloudIn.points[ idx ].y / laserCloudIn.points[ idx ].xÂğ£¬
+                if ( idx == 0 )//ç¬¬ä¸€ä¸ªç‚¹ä¸ºä»€ä¹ˆä¸€å®šä¸èƒ½ä¸º0,æ˜¯å› ä¸ºè¦è®¡ç®—ä¸‹é¢çš„ laserCloudIn.points[ idx ].y / laserCloudIn.points[ idx ].xå—ï¼Œ
                 {
                     // TODO: handle this case.
                     std::cout << "First point should be normal!!!" << std::endl;
@@ -518,10 +518,10 @@ class Livox_laser
             pt_info->pt_2d_img << laserCloudIn.points[ idx ].y / laserCloudIn.points[ idx ].x, laserCloudIn.points[ idx ].z / laserCloudIn.points[ idx ].x;
             pt_info->polar_dis_sq2 = dis2_xy( pt_info->pt_2d_img( 0 ), pt_info->pt_2d_img( 1 ) );
 
-            //´òÉÏ±êÇ©£¬¾àÀë¹ı¶Ì»òÕß·´ÉäÂÊ¹ıĞ¡
+            //æ‰“ä¸Šæ ‡ç­¾ï¼Œè·ç¦»è¿‡çŸ­æˆ–è€…åå°„ç‡è¿‡å°
             eval_point( pt_info );
 
-            //É¨ÃèÊÓ³¡µÄ±ß½çµã£¬É¨ÃéÏßĞ±ÂÊ±ä»¯¹ı¿ìµÄµã
+            //æ‰«æè§†åœºçš„è¾¹ç•Œç‚¹ï¼Œæ‰«ç„çº¿æ–œç‡å˜åŒ–è¿‡å¿«çš„ç‚¹
             if ( pt_info->polar_dis_sq2 > m_max_edge_polar_pos )
             {
                 add_mask_of_point( pt_info, e_pt_circle_edge, 2 );
@@ -542,7 +542,7 @@ class Livox_laser
                     pt_info->polar_direction = -1;
                 }
 
-                if ( pt_info->polar_direction == -1 && m_pts_info_vec[ idx - 1 ].polar_direction == 1 )/*ÕâÑùµÄµã /\0 */
+                if ( pt_info->polar_direction == -1 && m_pts_info_vec[ idx - 1 ].polar_direction == 1 )/*è¿™æ ·çš„ç‚¹ /\0 */
                 {
                     if ( edge_idx.size() == 0 || ( idx - split_idx[ split_idx.size() - 1 ] ) > 50 )
                     {
@@ -552,7 +552,7 @@ class Livox_laser
                     }
                 }
 
-                if ( pt_info->polar_direction == 1 && m_pts_info_vec[ idx - 1 ].polar_direction == -1 )/* /ÕâÑùµÄµã \/ */
+                if ( pt_info->polar_direction == 1 && m_pts_info_vec[ idx - 1 ].polar_direction == -1 )/* /è¿™æ ·çš„ç‚¹ \/ */
                 {
                     if ( zero_idx.size() == 0 || ( idx - split_idx[ split_idx.size() - 1 ] ) > 50 )
                     {

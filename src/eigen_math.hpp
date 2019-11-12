@@ -6,7 +6,6 @@
 #include <Eigen/Eigen>
 #include <math.h>
 #include <stdio.h>
-
 namespace Eigen_math
 {
 template <typename T>

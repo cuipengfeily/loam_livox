@@ -327,7 +327,7 @@ class Laser_mapping
         nh.param<float>( "max_allow_incre_T", m_para_max_speed, 100.0 / 50.0 );
         nh.param<float>( "max_allow_final_cost", m_max_final_cost, 1.0 );
         nh.param<int>( "maximum_mapping_buffer", m_max_buffer_size, 5 );
-        nh.param<int>( "mapping_init_accumulate_frames", m_mapping_init_accumulate_frames, 50 );
+        nh.param<int>( "mapping_init_accumulate_frames", m_mapping_init_accumulate_frames, 10 );//old is 50
 
         string pcd_save_dir_name;
         nh.param<int>( "if_save_to_pcd_files", m_if_save_to_pcd_files, 0 );
@@ -371,8 +371,10 @@ class Laser_mapping
         Eigen::Vector3d point_curr( pi->x, pi->y, pi->z );
         Eigen::Vector3d point_w;
 
+        //if_undistore = 0;
         if ( MOTION_DEBLUR == 0 || if_undistore == 0 || interpolate_s == 1.0 )
         {
+            //printf("deb\n");
             point_w = m_q_w_curr * point_curr + m_t_w_curr;
         }
         else
@@ -387,10 +389,11 @@ class Laser_mapping
             if ( 1 ) // Using rodrigues for fast compute.
             {
                 //https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula
-                Eigen::Vector3d interpolate_T = m_t_w_incre * ( interpolate_s * BLUR_SCALE );
-                double          interpolate_R_theta = m_interpolatation_theta * interpolate_s;
+                Eigen::Vector3d interpolate_T = m_t_w_incre * ( interpolate_s * BLUR_SCALE );//å¹³ç§»åˆ†é‡
+                double          interpolate_R_theta = m_interpolatation_theta * interpolate_s;//æ—‹è½¬åˆ†é‡ çš„ Theta
                 Eigen::Matrix<double, 3, 3> interpolate_R_mat;
 
+                // R(Omg)(Theta) = I + Omg * sin(Theta) + Omg*Omg*(1- cos(Theta))
                 interpolate_R_mat = Eigen::Matrix3d::Identity() + sin( interpolate_R_theta ) * m_interpolatation_omega_hat + ( 1 - cos( interpolate_R_theta ) ) * m_interpolatation_omega_hat_sq2;
                 point_w = m_q_w_last * ( interpolate_R_mat * point_curr + interpolate_T ) + m_t_w_last;
             }
@@ -426,7 +429,7 @@ class Laser_mapping
 
         for ( unsigned int i = 0; i < points_size; i++ )
         {
-            pointAssociateToMap( &pc_in.points[ i ], &pt_out.points[ i ], refine_blur( pc_in.points[ i ].intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), if_undistore );
+            pointAssociateToMap( &pc_in.points[ i ], &pt_out.points[ i ], pc_in.points[ i ].intensity, if_undistore );
         }
 
         return points_size;
@@ -588,6 +591,8 @@ class Laser_mapping
                     first_time_stamp = m_time_pc_corner_past;
                 }
 
+                double begin_time_f = ros::Time::now().toSec();
+
                 ( *m_file_logger.get_ostream() ) << "Messgage time stamp = " << m_time_pc_corner_past - first_time_stamp << endl;
 
                 m_laser_cloud_corner_last->clear();
@@ -613,9 +618,8 @@ class Laser_mapping
                 m_last_time_stamp = max_t;
                 reset_incremtal_parameter();
 
-
-                //100 * 100 * 100µÄ CUBE£¬ Ã¿¸öCUBE³¤¿í¸ß¶¼ÊÇ 50 Ã×
-                //ÎªÊ²Ã´Òª ¼ÓÉÏ m_para_laser_cloud_center_width Õâ¸öÊıÖµ,ÕâÊÇÒòÎª¼ÆËãË÷Òı¶¼ÊÇÕıÕûÊı£¬ĞèÒªÍ³Ò»ÏòÓÒÆ½ÒÆ50¸ö CUBE£¬Ò²¼´2500Ã×
+                //100 * 100 * 100çš„ CUBEï¼Œ æ¯ä¸ªCUBEé•¿å®½é«˜éƒ½æ˜¯ 50 ç±³
+                //ä¸ºä»€ä¹ˆè¦ åŠ ä¸Š m_para_laser_cloud_center_width è¿™ä¸ªæ•°å€¼,è¿™æ˜¯å› ä¸ºè®¡ç®—ç´¢å¼•éƒ½æ˜¯æ­£æ•´æ•°ï¼Œéœ€è¦ç»Ÿä¸€å‘å³å¹³ç§»50ä¸ª CUBEï¼Œä¹Ÿå³2500ç±³
                 int centerCubeI = int( ( m_t_w_curr.x() + CUBE_W / 2 ) / CUBE_W ) + m_para_laser_cloud_center_width;
                 int centerCubeJ = int( ( m_t_w_curr.y() + CUBE_H / 2 ) / CUBE_H ) + m_para_laser_cloud_center_height;
                 int centerCubeK = int( ( m_t_w_curr.z() + CUBE_D / 2 ) / CUBE_D ) + m_para_laser_cloud_center_depth;
@@ -632,8 +636,8 @@ class Laser_mapping
                 //printf( "****** min max timestamp = [%.6f, %.6f] ****** \r\n", m_minimum_pt_time_stamp, m_maximum_pt_time_stamp );
                 printf( "****** min max timestamp = [%.6f, %.6f] [%d %d %d]****** \r\n", m_minimum_pt_time_stamp, m_maximum_pt_time_stamp,centerCubeI, centerCubeJ, centerCubeK);
 
-                //Õâ¼¸¸öÑ­»·Óï¾ä ÊÇ×÷Îªµ÷ÕûCUBEÖĞĞÄÓÃµÄ£¬ Èç¹ûµØÍ¼ÔöµÄÌ«´ó£¬³¬³öÁË100 * 100 * 100 CUBE µÄ·¶Î§£¬ÄÇÃ´ĞèÒªÎÒÃÇ½«ÕûÌåCUBEµÄÖĞĞÄÒÆ¶¯Ò»ÏÂ£¬É¾³ıÌ«ÀÏµÄÇøÓò£¬ Ìí¼ÓĞÂµÄ¿ÕÇøÓò£¬Í¬Ê±»¹±£Ö¤ÁË×ÜÌåÊı¾İÁ¿²»±ä
-                while ( centerCubeI < 3 )//Èç¹û×óÏÂ½Ç²»¹»ÓÃÁË£¬ĞèÒªÉ¾³ıÓÒÉÏ½ÇµÄÇøÓò£¬¸ø×óÏÂ½ÇÓÃ
+                //è¿™å‡ ä¸ªå¾ªç¯è¯­å¥ æ˜¯ä½œä¸ºè°ƒæ•´CUBEä¸­å¿ƒç”¨çš„ï¼Œ å¦‚æœåœ°å›¾å¢çš„å¤ªå¤§ï¼Œè¶…å‡ºäº†100 * 100 * 100 CUBE çš„èŒƒå›´ï¼Œé‚£ä¹ˆéœ€è¦æˆ‘ä»¬å°†æ•´ä½“CUBEçš„ä¸­å¿ƒç§»åŠ¨ä¸€ä¸‹ï¼Œåˆ é™¤å¤ªè€çš„åŒºåŸŸï¼Œ æ·»åŠ æ–°çš„ç©ºåŒºåŸŸï¼ŒåŒæ—¶è¿˜ä¿è¯äº†æ€»ä½“æ•°æ®é‡ä¸å˜
+                while ( centerCubeI < 3 )//å¦‚æœå·¦ä¸‹è§’ä¸å¤Ÿç”¨äº†ï¼Œéœ€è¦åˆ é™¤å³ä¸Šè§’çš„åŒºåŸŸï¼Œç»™å·¦ä¸‹è§’ç”¨
                 {
                     for ( int j = 0; j < m_para_laser_cloud_height; j++ )
                     {
@@ -666,7 +670,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_width++;
                 }
 
-                while ( centerCubeI >= m_para_laser_cloud_width - 3 )//Èç¹ûÓÒÉÏ½Ç²»¹»ÓÃÁË£¬ĞèÒªÉ¾³ı×óÏÂ½ÇµÄÇøÓò£¬¸øÓÒÉÏ½ÇÓÃ
+                while ( centerCubeI >= m_para_laser_cloud_width - 3 )//å¦‚æœå³ä¸Šè§’ä¸å¤Ÿç”¨äº†ï¼Œéœ€è¦åˆ é™¤å·¦ä¸‹è§’çš„åŒºåŸŸï¼Œç»™å³ä¸Šè§’ç”¨
                 {
                     for ( int j = 0; j < m_para_laser_cloud_height; j++ )
                     {
@@ -699,7 +703,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_width--;
                 }
 
-                while ( centerCubeJ < 3 )//Èç¹ûY¸ºÏò²»¹»ÓÃÁË£¬ĞèÒªÉ¾³ıYÕıÏòµÄÇøÓò£¬¸øY¸ºÏòÓÃ
+                while ( centerCubeJ < 3 )//å¦‚æœYè´Ÿå‘ä¸å¤Ÿç”¨äº†ï¼Œéœ€è¦åˆ é™¤Yæ­£å‘çš„åŒºåŸŸï¼Œç»™Yè´Ÿå‘ç”¨
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -732,7 +736,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_height++;
                 }
 
-                while ( centerCubeJ >= m_para_laser_cloud_height - 3 )//Èç¹ûYÕıÏò²»¹»ÓÃÁË£¬ĞèÒªÉ¾³ıY¸ºÏòµÄÇøÓò£¬¸øYÕıÏòÓÃ
+                while ( centerCubeJ >= m_para_laser_cloud_height - 3 )//å¦‚æœYæ­£å‘ä¸å¤Ÿç”¨äº†ï¼Œéœ€è¦åˆ é™¤Yè´Ÿå‘çš„åŒºåŸŸï¼Œç»™Yæ­£å‘ç”¨
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -765,7 +769,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_height--;
                 }
 
-                while ( centerCubeK < 3 )//Èç¹ûZ¸ºÏò²»¹»ÓÃÁË£¬ĞèÒªÉ¾³ıZÕıÏòµÄÇøÓò£¬¸øZ¸ºÏòÓÃ
+                while ( centerCubeK < 3 )//å¦‚æœZè´Ÿå‘ä¸å¤Ÿç”¨äº†ï¼Œéœ€è¦åˆ é™¤Zæ­£å‘çš„åŒºåŸŸï¼Œç»™Zè´Ÿå‘ç”¨
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -798,7 +802,7 @@ class Laser_mapping
                     m_para_laser_cloud_center_depth++;
                 }
 
-                while ( centerCubeK >= m_para_laser_cloud_depth - 3 )//Èç¹ûZÕıÏò²»¹»ÓÃÁË£¬ĞèÒªÉ¾³ıZ¸ºÏòµÄÇøÓò£¬¸øZÕıÏòÓÃ
+                while ( centerCubeK >= m_para_laser_cloud_depth - 3 )//å¦‚æœZæ­£å‘ä¸å¤Ÿç”¨äº†ï¼Œéœ€è¦åˆ é™¤Zè´Ÿå‘çš„åŒºåŸŸï¼Œç»™Zæ­£å‘ç”¨
                 {
                     for ( int i = 0; i < m_para_laser_cloud_width; i++ )
                     {
@@ -834,7 +838,7 @@ class Laser_mapping
                 int laserCloudValidNum = 0;
                 int laserCloudSurroundNum = 0;
 
-                // CUBE(I,J,K)ÖÜÎ§ 5 x 5 x 3·¶Î§µÄÎªÏàÁÚCUBE
+                // CUBE(I,J,K)å‘¨å›´ 5 x 5 x 3èŒƒå›´çš„ä¸ºç›¸é‚»CUBE
                 for ( int i = centerCubeI - 2; i <= centerCubeI + 2; i++ )
                 {
                     for ( int j = centerCubeJ - 2; j <= centerCubeJ + 2; j++ )
@@ -854,7 +858,7 @@ class Laser_mapping
                     }
                 }
 
-                //MAPÖĞµÄ½ÇµãºÍÆ½Ãæµã,´ÓÏàÁÚµÄcubeÖĞÈ¡³öËùÓĞµÄ½ÇµãºÍÃæµã£¬ÈÏÎªÊÇMAPµã
+                //MAPä¸­çš„è§’ç‚¹å’Œå¹³é¢ç‚¹,ä»ç›¸é‚»çš„cubeä¸­å–å‡ºæ‰€æœ‰çš„è§’ç‚¹å’Œé¢ç‚¹ï¼Œè®¤ä¸ºæ˜¯MAPç‚¹
                 m_laser_cloud_corner_from_map->clear();
                 m_laser_cloud_surf_from_map->clear();
 
@@ -867,13 +871,13 @@ class Laser_mapping
                 int laserCloudCornerFromMapNum = m_laser_cloud_corner_from_map->points.size();
                 int laserCloudSurfFromMapNum = m_laser_cloud_surf_from_map->points.size();
 
-                //¶Ô×îĞÂÊı¾İÖ¡µÄ½Çµã ÂË²¨
+                //å¯¹æœ€æ–°æ•°æ®å¸§çš„è§’ç‚¹ æ»¤æ³¢
                 pcl::PointCloud<PointType>::Ptr laserCloudCornerStack( new pcl::PointCloud<PointType>() );
                 m_down_sample_filter_corner.setInputCloud( m_laser_cloud_corner_last );
                 m_down_sample_filter_corner.filter( *laserCloudCornerStack );
                 int laser_corner_pt_num = laserCloudCornerStack->points.size();
 
-                //¶Ô×îĞÂÊı¾İÖ¡ÖĞµÄÆ½Ãæµã ÂË²¨
+                //å¯¹æœ€æ–°æ•°æ®å¸§ä¸­çš„å¹³é¢ç‚¹ æ»¤æ³¢
                 pcl::PointCloud<PointType>::Ptr laserCloudSurfStack( new pcl::PointCloud<PointType>() );
                 m_down_sample_filter_surface.setInputCloud( m_laser_cloud_surf_last );
                 m_down_sample_filter_surface.filter( *laserCloudSurfStack );
@@ -892,13 +896,16 @@ class Laser_mapping
                 int                    surface_rejecetion_num = 0;
                 int                    if_undistore_in_matching = 1;
 
-                //¾Ö²¿MAPÖĞµÄ½ÇµãºÍÆ½ÃæµãÊıÁ¿Âú×ããĞÖµÊ±£¬¼ÆËã
+
+                double map_get_time_f = ros::Time::now().toSec();
+
+                //å±€éƒ¨MAPä¸­çš„è§’ç‚¹å’Œå¹³é¢ç‚¹æ•°é‡æ»¡è¶³é˜ˆå€¼æ—¶ï¼Œè®¡ç®—
                 if ( laserCloudCornerFromMapNum > CORNER_MIN_MAP_NUM && laserCloudSurfFromMapNum > SURFACE_MIN_MAP_NUM && frameCount > m_mapping_init_accumulate_frames )
                 {
                     m_kdtree_corner_from_map->setInputCloud( m_laser_cloud_corner_from_map );
                     m_kdtree_surf_from_map->setInputCloud( m_laser_cloud_surf_from_map );
 
-                    //ICP×î´óµü´ú´ÎÊı
+                    //ICPæœ€å¤§è¿­ä»£æ¬¡æ•°
                     for ( int iterCount = 0; iterCount < m_para_icp_max_iterations; iterCount++ )
                     {
                         corner_avail_num = 0;
@@ -916,23 +923,23 @@ class Laser_mapping
                         problem.AddParameterBlock( m_para_buffer_incremental, 4, q_parameterization );
                         problem.AddParameterBlock( m_para_buffer_incremental + 4, 3 );
 
-                        //¼ÆËã½Çµã²Ğ²è
+                        //è®¡ç®—è§’ç‚¹æ®‹èŒ¶
                         for ( int i = 0; i < laser_corner_pt_num; i++ )
                         {
                             pointOri = laserCloudCornerStack->points[ i ];
-                            //Í¨¹ıÆ½ÒÆĞı×ªÏû³ı ÔË¶¯Ê§Õæ
-                            pointAssociateToMap( &pointOri, &pointSel, refine_blur( pointOri.intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), if_undistore_in_matching );
+                            //é€šè¿‡å¹³ç§»æ—‹è½¬æ¶ˆé™¤ è¿åŠ¨å¤±çœŸ
+                            pointAssociateToMap( &pointOri, &pointSel, pointOri.intensity, if_undistore_in_matching );
 
-                            //ÔÚMAPÖĞÑ°ÕÒ5¸ö×î½üÁÚµã
+                            //åœ¨MAPä¸­å¯»æ‰¾5ä¸ªæœ€è¿‘é‚»ç‚¹
                             m_kdtree_corner_from_map->nearestKSearch( pointSel, line_search_num, m_point_search_Idx, m_point_search_sq_dis );
 
-                            //×î½üÁÚµãµÄ¾àÀëÆ½·½ÒªÇóĞ¡ÓÚ2
+                            //æœ€è¿‘é‚»ç‚¹çš„è·ç¦»å¹³æ–¹è¦æ±‚å°äº2
                             if ( m_point_search_sq_dis[ line_search_num - 1 ] < 2.0 )
                             {
                                 bool                         line_is_avail = true;
                                 std::vector<Eigen::Vector3d> nearCorners;
                                 Eigen::Vector3d              center( 0, 0, 0 );
-                                if ( /*IF_LINE_FEATURE_CHECK*/ 1 )//ÁÚ½üµãÊÇ·ñÔÚ½üËÆÒ»ÌõÏßÉÏ
+                                if ( /*IF_LINE_FEATURE_CHECK*/ 1 )//é‚»è¿‘ç‚¹æ˜¯å¦åœ¨è¿‘ä¼¼ä¸€æ¡çº¿ä¸Š
                                 {
                                     for ( int j = 0; j < line_search_num; j++ )
                                     {
@@ -980,7 +987,7 @@ class Laser_mapping
                                             cost_function = ceres_icp_point2line<double>::Create( curr_point,
                                                                                                   pcl_pt_to_eigend( m_laser_cloud_corner_from_map->points[ m_point_search_Idx[ 0 ] ] ),
                                                                                                   pcl_pt_to_eigend( m_laser_cloud_corner_from_map->points[ m_point_search_Idx[ 1 ] ] ),
-                                                                                                  refine_blur( pointOri.intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ) * 1.0,
+                                                                                                  pointOri.intensity * 1.0,
                                                                                                   Eigen::Matrix<double, 4, 1>( m_q_w_last.w(), m_q_w_last.x(), m_q_w_last.y(), m_q_w_last.z() ),
                                                                                                   m_t_w_last ); //pointOri.intensity );
                                         }
@@ -1005,17 +1012,17 @@ class Laser_mapping
                             }
                         }
 
-                        //¼ÆËãÆ½Ãæµã²Ğ²è
+                        //è®¡ç®—å¹³é¢ç‚¹æ®‹èŒ¶
                         for ( int i = 0; i < laser_surface_pt_num; i++ )
                         {
 
                             pointOri = laserCloudSurfStack->points[ i ];
                             int planeValid = true;
-                            pointAssociateToMap( &pointOri, &pointSel, refine_blur( pointOri.intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), if_undistore_in_matching );
+                            pointAssociateToMap( &pointOri, &pointSel, pointOri.intensity, if_undistore_in_matching );
 
-                            //5¸ö×î½üÁÚÆ½Ãæµã
+                            //5ä¸ªæœ€è¿‘é‚»å¹³é¢ç‚¹
                             m_kdtree_surf_from_map->nearestKSearch( pointSel, plane_search_num, m_point_search_Idx, m_point_search_sq_dis );
-                            //×î½üÁÚÆ½Ãæµã¾àÀëÆ½·½µÄãĞÖµÎª 10m
+                            //æœ€è¿‘é‚»å¹³é¢ç‚¹è·ç¦»å¹³æ–¹çš„é˜ˆå€¼ä¸º 10m
                             if ( m_point_search_sq_dis[ plane_search_num - 1 ] < 10.0 )
                             {
                                 std::vector<Eigen::Vector3d> nearCorners;
@@ -1070,7 +1077,7 @@ class Laser_mapping
                                                 pcl_pt_to_eigend( m_laser_cloud_surf_from_map->points[ m_point_search_Idx[ 0 ] ] ),
                                                 pcl_pt_to_eigend( m_laser_cloud_surf_from_map->points[ m_point_search_Idx[ plane_search_num / 2 ] ] ),
                                                 pcl_pt_to_eigend( m_laser_cloud_surf_from_map->points[ m_point_search_Idx[ plane_search_num - 1 ] ] ),
-                                                refine_blur( pointOri.intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ) * BLUR_SCALE,
+                                                pointOri.intensity * BLUR_SCALE,
                                                 Eigen::Matrix<double, 4, 1>( m_q_w_last.w(), m_q_w_last.x(), m_q_w_last.y(), m_q_w_last.z() ),
                                                 m_t_w_last ); //pointOri.intensity );
                                         }
@@ -1121,7 +1128,10 @@ class Laser_mapping
                             }
 
                             set_ceres_solver_bound( problem );
+
+                            double bef_solver = ros::Time::now().toSec();
                             ceres::Solve( options, &problem, &summary );
+                            printf("sol1[%f]", ros::Time::now().toSec() - bef_solver);
 
                             // Remove outliers
                             residual_block_ids_bak.clear();
@@ -1154,7 +1164,11 @@ class Laser_mapping
                         }
                         options.max_num_iterations = m_para_cere_max_iterations;//5
                         set_ceres_solver_bound( problem );
+
+                        //double bef_solver_2 = ros::Time::now().toSec();
                         ceres::Solve( options, &problem, &summary );
+                        //printf("sol2[%f]", ros::Time::now().toSec() - bef_solver_2);
+
                         if ( MOTION_DEBLUR )
                         {
                             compute_interpolatation_rodrigue( m_q_w_incre, m_interpolatation_omega, m_interpolatation_theta, m_interpolatation_omega_hat );
@@ -1209,6 +1223,8 @@ class Laser_mapping
                     ROS_WARN( "time Map corner and surf num are not enough" );
                 }
 
+                double iterator_end_time_f = ros::Time::now().toSec();
+
                 if ( PUB_DEBUG_INFO )
                 {
                     pcl::PointCloud<PointType> pc_feature_pub_corners, pc_feature_pub_surface;
@@ -1226,12 +1242,12 @@ class Laser_mapping
                     m_pub_last_corner_pts.publish( laserCloudMsg );
                 }
 
-                //¶ÔÃ¿¸ö½Çµã¼ÆËãµãµÄcube ±àºÅ£¬È»ºó½«µã·ÅÈë cubeÖĞ
+                //å¯¹æ¯ä¸ªè§’ç‚¹è®¡ç®—ç‚¹çš„cube ç¼–å·ï¼Œç„¶åå°†ç‚¹æ”¾å…¥ cubeä¸­
                 for ( int i = 0; i < laser_corner_pt_num; i++ )
                 {
                     //if ( MOTION_DEBLUR && ( laserCloudSurfStack->points[ i ].intensity < m_para_min_match_blur ) )
                     //*( m_file_logger.get_ostream() ) << __FILE__ << " --- " << __LINE__ << endl;
-                    pointAssociateToMap( &laserCloudCornerStack->points[ i ], &pointSel, refine_blur( laserCloudCornerStack->points[ i ].intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), g_if_undistore );
+                    pointAssociateToMap( &laserCloudCornerStack->points[ i ], &pointSel, laserCloudCornerStack->points[ i ].intensity, g_if_undistore );
 
                     int cubeI = int( ( pointSel.x + CUBE_W / 2 ) / CUBE_W ) + m_para_laser_cloud_center_width;
                     int cubeJ = int( ( pointSel.y + CUBE_H / 2 ) / CUBE_H ) + m_para_laser_cloud_center_height;
@@ -1255,11 +1271,11 @@ class Laser_mapping
                     }
                 }
 
-                //¶ÔÃ¿¸öÆ½Ãæµã¼ÆËãµãµÄcube ±àºÅ£¬È»ºó½«µã·ÅÈë cubeÖĞ
+                //å¯¹æ¯ä¸ªå¹³é¢ç‚¹è®¡ç®—ç‚¹çš„cube ç¼–å·ï¼Œç„¶åå°†ç‚¹æ”¾å…¥ cubeä¸­
                 for ( int i = 0; i < laser_surface_pt_num; i++ )
                 {
                     //*( m_file_logger.get_ostream() ) << __FILE__ << " --- " << __LINE__ << endl;
-                    pointAssociateToMap( &laserCloudSurfStack->points[ i ], &pointSel, refine_blur( laserCloudSurfStack->points[ i ].intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), g_if_undistore );
+                    pointAssociateToMap( &laserCloudSurfStack->points[ i ], &pointSel, laserCloudSurfStack->points[ i ].intensity, g_if_undistore);
 
                     int cubeI = int( ( pointSel.x + CUBE_W / 2 ) / CUBE_W ) + m_para_laser_cloud_center_width;
                     int cubeJ = int( ( pointSel.y + CUBE_H / 2 ) / CUBE_H ) + m_para_laser_cloud_center_height;
@@ -1283,7 +1299,7 @@ class Laser_mapping
                     }
                 }
 
-                //¶ÔÃ¿Ò»¸öÁÚ½üµã cube ½µ²ÉÑù
+                //å¯¹æ¯ä¸€ä¸ªé‚»è¿‘ç‚¹ cube é™é‡‡æ ·
                 for ( int i = 0; i < laserCloudValidNum; i++ )
                 {
                     int ind = m_laser_cloud_valid_Idx[ i ];
@@ -1305,8 +1321,10 @@ class Laser_mapping
                     m_laser_cloud_surface_array[ ind ] = tmpSurf;
                 }
 
+                double coner_surface_tomap_time_f = ros::Time::now().toSec();
+
                 //publish surround map for every 5 frame
-                if ( /*PUB_SURROUND_PTS*/0 )
+                if ( /*PUB_SURROUND_PTS*/1 )
                 {
                     if ( frameCount % 500 == 0 )
                     {
@@ -1349,13 +1367,33 @@ class Laser_mapping
                     }
                 }
 
-                //Åä×¼µ½È«¾Ö×ø±êÏµÖ®ºó·¢²¼³öÈ¥
+                //é…å‡†åˆ°å…¨å±€åæ ‡ç³»ä¹‹åå‘å¸ƒå‡ºå»
                 int laserCloudFullResNum = m_laser_cloud_full_res->points.size();
 
+                //å·®å€¼è®¡ç®—æ¯ä¸ªç‚¹çš„åç§»æ•°é‡
                 for ( int i = 0; i < laserCloudFullResNum; i++ )
                 {
-                    pointAssociateToMap( &m_laser_cloud_full_res->points[ i ], &m_laser_cloud_full_res->points[ i ], refine_blur( m_laser_cloud_full_res->points[ i ].intensity, m_minimum_pt_time_stamp, m_maximum_pt_time_stamp ), 1 );
+                    pointAssociateToMap( &m_laser_cloud_full_res->points[ i ], &m_laser_cloud_full_res->points[ i ], m_laser_cloud_full_res->points[ i ].intensity, 1 );
                 }
+
+                static int printflag = true;
+                FILE *p = NULL;
+                if(printflag)
+                {
+                    p = fopen("/home/cpf/outtest.txt", "w");
+                }
+                if(printflag && p)
+                {
+                    fprintf(p, "total:%d\n", laserCloudFullResNum);
+                    for(int i = 0; i < laserCloudFullResNum;i++)
+                        fprintf(p, "%d %f %f\n",i,  m_laser_cloud_full_res->points[ i ].intensity, ((i % 10000) * 3 + (i / 10000))  / 29999.0);
+                }
+                if(printflag)
+                {
+                    printflag = false;
+                    fclose(p);
+                }
+
                 sensor_msgs::PointCloud2 laserCloudFullRes3;
                 pcl::toROSMsg( *m_laser_cloud_full_res, laserCloudFullRes3 );
                 laserCloudFullRes3.header.stamp = ros::Time().fromSec( m_time_odom );
@@ -1367,7 +1405,10 @@ class Laser_mapping
                     m_pcl_tools_aftmap.save_to_pcd_files( "aft_mapp", *m_laser_cloud_full_res, 1 );
                 }
 
-                //Ê±¼äÎª Áã£¬ £¿£¿£¿
+                double full_registered_time_f = ros::Time::now().toSec();
+
+
+                //æ—¶é—´ä¸º é›¶ï¼Œ ï¼Ÿï¼Ÿï¼Ÿ
                 nav_msgs::Odometry odomAftMapped;
                 odomAftMapped.header.frame_id = "/camera_init";
                 odomAftMapped.child_frame_id = "/aft_mapped";
@@ -1424,6 +1465,10 @@ class Laser_mapping
                 transform.setRotation( q );
                 br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "/camera_init", "/aft_mapped" ) );
 
+                double end_time_f = ros::Time::now().toSec();
+
+                printf("beg_cube:[%f] [%f] [%f] [%f]\n", map_get_time_f - begin_time_f, iterator_end_time_f- map_get_time_f, coner_surface_tomap_time_f-iterator_end_time_f,
+                       full_registered_time_f - coner_surface_tomap_time_f);
                 frameCount++;
             }
             std::chrono::nanoseconds dura( 1 );

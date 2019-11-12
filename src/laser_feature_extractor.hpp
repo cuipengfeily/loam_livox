@@ -53,8 +53,10 @@
 #include <tf/transform_datatypes.h>
 #include <vector>
 
-#include "livox_feature_extractor.hpp"
+#include "zvision_feature_extractor.hpp"
+//#include "livox_feature_extractor.hpp"
 #include "tools/common.h"
+//#include "tools/angle.h"
 #include "tools/logger.hpp"
 
 using std::atan2;
@@ -65,6 +67,12 @@ using namespace Common_tools;
 class Laser_feature
 {
   public:
+    enum LIDAR_TYPE
+            {
+        VELODYNE,
+        LIVOX,
+        ZVISION_ML30
+    };
     const double m_para_scanPeriod = 0.1;
 
     int m_if_pub_debug_feature = 1;
@@ -83,9 +91,9 @@ class Laser_feature
     File_logger m_file_logger;
 
     bool        m_if_pub_each_line = false;
-    int         m_lidar_type = 0; // 0 is velodyne, 1 is livox
-    int         m_laser_scan_number = 64;
-    Livox_laser m_livox;
+    int         m_lidar_type = ZVISION_ML30;//ZVISION_ML30; // 0 is velodyne, 1 is livox
+    int         m_laser_scan_number = 16;
+    Zvision_laser m_zvision;
     ros::Time   m_init_timestamp;
     bool comp( int i, int j )
     {
@@ -108,6 +116,8 @@ class Laser_feature
     sensor_msgs::PointCloud2  temp_out_msg;
     pcl::VoxelGrid<PointType> m_voxel_filter_for_surface;
     pcl::VoxelGrid<PointType> m_voxel_filter_for_corner;
+
+
     int                       init_ros_env()
     {
         ros::NodeHandle nh;
@@ -125,17 +135,25 @@ class Laser_feature
         nh.param<double>( "corner_curvature", livox_corners, 0.05 );
         nh.param<double>( "surface_curvature", livox_surface, 0.01 );
         nh.param<double>( "minimum_view_angle", minimum_view_angle, 10 );
-        m_livox.thr_corner_curvature = livox_corners;
-        m_livox.thr_surface_curvature = livox_surface;
-        m_livox.minimum_view_angle = minimum_view_angle;
-        //livox.m_livox_min_allow_dis = MINIMUM_RANGE;
+        m_zvision.thr_corner_curvature = livox_corners;
+        m_zvision.thr_surface_curvature = livox_surface;
+        m_zvision.minimum_view_angle = minimum_view_angle;
+        //livox.m_zvision_min_allow_dis = MINIMUM_RANGE;
 
         printf( "scan line number %d \n", m_laser_scan_number );
 
-        if ( m_laser_scan_number != 16 && m_laser_scan_number != 64 )
+        std::string point_topic = "/laser_points";
+        if(ZVISION_ML30 != m_lidar_type)
         {
-            printf( "only support velodyne with 16 or 64 scan line!" );
-            return 0;
+            if ( m_laser_scan_number != 16 && m_laser_scan_number != 64 )
+            {
+                printf( "only support velodyne with 16 or 64 scan line!" );
+                return 0;
+            }
+        }
+        else
+        {
+            point_topic = "/zvision_lidar_points";
         }
 
         string log_save_dir_name;
@@ -143,7 +161,7 @@ class Laser_feature
         m_file_logger.set_log_dir( log_save_dir_name );
         m_file_logger.init( "scanRegistration.log" );
 
-        m_sub_input_laser_cloud = nh.subscribe<sensor_msgs::PointCloud2>( "/laser_points", 10000, &Laser_feature::laserCloudHandler, this );
+        m_sub_input_laser_cloud = nh.subscribe<sensor_msgs::PointCloud2>( point_topic, 10000, &Laser_feature::laserCloudHandler, this );
 
         m_pub_laser_pc = nh.advertise<sensor_msgs::PointCloud2>( "/laser_points_2", 10000 );
         m_pub_pc_sharp_corner = nh.advertise<sensor_msgs::PointCloud2>( "/laser_cloud_sharp", 10000 );
@@ -208,7 +226,8 @@ class Laser_feature
 
     void laserCloudHandler( const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg )
     {
-        std::vector<pcl::PointCloud<PointType>> laserCloudScans( m_laser_scan_number );
+        //printf("handler\n");
+        std::vector<pcl::PointCloud<PointType>> laserCloudScans( m_laser_scan_number );//3 laser field
 
         if ( !m_para_systemInited )
         {
@@ -233,10 +252,94 @@ class Laser_feature
 
         size_t cloudSize = laserCloudIn.points.size();
 
-        if ( m_lidar_type ) // Livox scans
+        if(ZVISION_ML30 == m_lidar_type)
         {
+            m_zvision.extract_laser_features_zvision( laserCloudIn, laserCloudMsg->header.stamp.toSec() );
 
-            laserCloudScans = m_livox.extract_laser_features( laserCloudIn, laserCloudMsg->header.stamp.toSec() );
+            if ( laserCloudScans.size() <= 3 ) // less than 3 laser
+            {
+                //return;
+            }
+
+            if ( m_if_pub_debug_feature )// 1
+            {
+                /********************************************
+                *    Feature extraction for zvision lidar     *
+                ********************************************/
+                int piece_wise = 255;//三个视场的数据单独计算
+                pcl::PointCloud<PointType>::Ptr livox_corners( new pcl::PointCloud<PointType>() ),
+                    livox_surface( new pcl::PointCloud<PointType>() ),
+                    livox_full( new pcl::PointCloud<PointType>() );
+
+                m_zvision.get_features_zvision( *livox_corners, *livox_surface, *livox_full, piece_wise);
+
+                ros::Time current_time = ros::Time::now();
+
+                printf("full size: %d\n", livox_full->points.size());
+                pcl::toROSMsg( *livox_full, temp_out_msg );
+                temp_out_msg.header.stamp = current_time;
+                temp_out_msg.header.frame_id = "/camera_init";
+                m_pub_pc_livox_full.publish( temp_out_msg );
+
+                m_voxel_filter_for_surface.setInputCloud( livox_surface );
+                m_voxel_filter_for_surface.filter( *livox_surface );
+                pcl::toROSMsg( *livox_surface, temp_out_msg );
+                temp_out_msg.header.stamp = current_time;
+                temp_out_msg.header.frame_id = "/camera_init";
+                m_pub_pc_livox_surface.publish( temp_out_msg );
+
+                m_voxel_filter_for_corner.setInputCloud( livox_corners );
+                m_voxel_filter_for_corner.filter( *livox_corners );
+                pcl::toROSMsg( *livox_corners, temp_out_msg );
+                temp_out_msg.header.stamp = current_time;
+                temp_out_msg.header.frame_id = "/camera_init";
+                m_pub_pc_livox_corners.publish( temp_out_msg );
+
+                //printf("cnt: %d %d %d\n", livox_corners->size(), livox_surface->size(), livox_full->size());
+                #if 0
+                for ( int i = 0; i < piece_wise; i++ )
+                {
+                    pcl::PointCloud<PointType>::Ptr livox_corners( new pcl::PointCloud<PointType>() ),
+                        livox_surface( new pcl::PointCloud<PointType>() ),
+                        livox_full( new pcl::PointCloud<PointType>() );
+
+                    m_zvision.get_features_zvision( *livox_corners, *livox_surface, *livox_full, i);
+
+                    ros::Time current_time = ros::Time::now();
+
+                    pcl::toROSMsg( *livox_full, temp_out_msg );
+                    temp_out_msg.header.stamp = current_time;
+                    temp_out_msg.header.frame_id = "/camera_init";
+                    m_pub_pc_livox_full.publish( temp_out_msg );
+
+                    m_voxel_filter_for_surface.setInputCloud( livox_surface );
+                    m_voxel_filter_for_surface.filter( *livox_surface );
+                    pcl::toROSMsg( *livox_surface, temp_out_msg );
+                    temp_out_msg.header.stamp = current_time;
+                    temp_out_msg.header.frame_id = "/camera_init";
+                    m_pub_pc_livox_surface.publish( temp_out_msg );
+
+                    m_voxel_filter_for_corner.setInputCloud( livox_corners );
+                    m_voxel_filter_for_corner.filter( *livox_corners );
+                    pcl::toROSMsg( *livox_corners, temp_out_msg );
+                    temp_out_msg.header.stamp = current_time;
+                    temp_out_msg.header.frame_id = "/camera_init";
+                    m_pub_pc_livox_corners.publish( temp_out_msg );
+                    if ( m_odom_mode == 0 ) // odometry mode
+                    {
+                        printf("odomy mode === 0\n");
+                        break;
+                    }
+                }
+                #endif
+            }
+            return;
+        }
+        else if (LIVOX == m_lidar_type ) // Livox scans
+        {
+            //printf("livox\n");
+            std::vector<pcl::PointCloud<PointType>> laserCloudScans_tmp( m_laser_scan_number );//3 laser field
+            laserCloudScans = m_zvision.extract_laser_features( laserCloudIn, laserCloudScans_tmp, laserCloudMsg->header.stamp.toSec() );
 
             if ( laserCloudScans.size() <= 5 ) // less than 5 scan
             {
@@ -268,8 +371,8 @@ class Laser_feature
                     end_scans = int( ( m_laser_scan_number * ( i + 1 ) ) / piece_wise ) - 1;
 
                     int end_idx = laserCloudScans[ end_scans ].size() - 1;
-                    piece_wise_start[ i ] = ( ( float ) m_livox.find_pt_info( laserCloudScans[ start_scans ].points[ 0 ] )->idx ) / m_livox.m_pts_info_vec.size();
-                    piece_wise_end[ i ] = ( ( float ) m_livox.find_pt_info( laserCloudScans[ end_scans ].points[ end_idx ] )->idx ) / m_livox.m_pts_info_vec.size();
+                    piece_wise_start[ i ] = ( ( float ) m_zvision.find_pt_info( laserCloudScans[ start_scans ].points[ 0 ] )->idx ) / m_zvision.m_pts_info_vec.size();
+                    piece_wise_end[ i ] = ( ( float ) m_zvision.find_pt_info( laserCloudScans[ end_scans ].points[ end_idx ] )->idx ) / m_zvision.m_pts_info_vec.size();
                 }
 
                 for ( int i = 0; i < piece_wise; i++ )
@@ -278,7 +381,7 @@ class Laser_feature
                         livox_surface( new pcl::PointCloud<PointType>() ),
                         livox_full( new pcl::PointCloud<PointType>() );
 
-                    m_livox.get_features( *livox_corners, *livox_surface, *livox_full, piece_wise_start[ i ], piece_wise_end[ i ] );
+                    m_zvision.get_features( *livox_corners, *livox_surface, *livox_full, piece_wise_start[ i ], piece_wise_end[ i ] );
 
                     ros::Time current_time = ros::Time::now();
 
@@ -306,6 +409,7 @@ class Laser_feature
                     }
                 }
             }
+            //printf("livox return\n");
             return;
         }
         else
@@ -520,14 +624,14 @@ class Laser_feature
         if ( m_lidar_type != 0 )
         //if(1)
         {
-            Livox_laser::Pt_infos *pt_info;
+            Zvision_laser::Pt_infos *pt_info;
             for ( unsigned int idx = 0; idx < cloudSize; idx++ )
             {
                 //printf( "Idx = %d, size = %d, pt = [%f,%f,%f]\r\n", idx, cloudSize, laserCloud->points[ idx ].x, laserCloud->points[ idx ].y, laserCloud->points[ idx ].z );
                 // printf( "Idx = %d, pt = [%f,%f,%f]\r\n", idx, 1.0,2.0,3.0 );
-                pt_info = m_livox.find_pt_info( laserCloud->points[ idx ] );
+                pt_info = m_zvision.find_pt_info( laserCloud->points[ idx ] );
 
-                if ( pt_info->pt_type != Livox_laser::e_pt_normal )
+                if ( pt_info->pt_type != Zvision_laser::e_pt_normal )
                 {
                     //std::cout << "Reject, id = "<<idx << " ---, type = " << livox.m_mask_pointtype[idx] <<std::endl;
                     m_pc_neighbor_picked[ idx ] = 1;
@@ -755,10 +859,15 @@ class Laser_feature
                 m_lidar_type = 1;
                 std::cout << "Set lidar type = livox" << std::endl;
             }
-            else
+            else if( lidar_tpye_name.compare( "velodyne" ) == 0 )
             {
                 std::cout << "Set lidar type = velodyne" << std::endl;
                 m_lidar_type = 0;
+            }
+            else
+            {
+                std::cout << "Set lidar type = velodyne" << std::endl;
+                m_lidar_type = 2;
             }
         }
         else
@@ -768,14 +877,14 @@ class Laser_feature
             std::cout << "Set lidar type = velodyne" << std::endl;
         }
 
-        if ( ros::param::get( "livox_min_dis", m_livox.m_livox_min_allow_dis ) )
+        if ( ros::param::get( "livox_min_dis", m_zvision.m_zvision_min_allow_dis ) )
         {
-            std::cout << "Set livox lidar minimum distance= " << m_livox.m_livox_min_allow_dis << std::endl;
+            std::cout << "Set livox lidar minimum distance= " << m_zvision.m_zvision_min_allow_dis << std::endl;
         }
 
-        if ( ros::param::get( "livox_min_sigma", m_livox.m_livox_min_sigma ) )
+        if ( ros::param::get( "livox_min_sigma", m_zvision.m_zvision_min_sigma ) )
         {
-            std::cout << "Set livox lidar minimum sigama =  " << m_livox.m_livox_min_sigma << std::endl;
+            std::cout << "Set livox lidar minimum sigama =  " << m_zvision.m_zvision_min_sigma << std::endl;
         }
         std::cout << "~~~~~ End ~~~~~" << endl;
     }

@@ -16,7 +16,6 @@
 // Point to Point ICP
 // Contour to contour ICP
 // Plane to Plane ICP
-
 //p2p with motion deblur
 template <typename _T>
 struct ceres_icp_point2point
