@@ -47,6 +47,7 @@
 #include <nav_msgs/Path.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/keypoints/uniform_sampling.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -161,6 +162,8 @@ class Laser_mapping
     float  m_minimum_pt_time_stamp = 0;
     float  m_maximum_pt_time_stamp = 1.0;
     float  m_last_max_blur = 0.0;
+
+    double m_map_downsample_para = 0.5;
 
     double m_interpolatation_theta;
     Eigen::Matrix<double, 3, 1> m_interpolatation_omega;
@@ -327,7 +330,8 @@ class Laser_mapping
         nh.param<float>( "max_allow_incre_T", m_para_max_speed, 100.0 / 50.0 );
         nh.param<float>( "max_allow_final_cost", m_max_final_cost, 1.0 );
         nh.param<int>( "maximum_mapping_buffer", m_max_buffer_size, 5 );
-        nh.param<int>( "mapping_init_accumulate_frames", m_mapping_init_accumulate_frames, 10 );//old is 50
+        nh.param<int>( "mapping_init_accumulate_frames", m_mapping_init_accumulate_frames, 50 );//old is 50
+        nh.param<double>( "mapping_downsample_para", m_map_downsample_para, 0.5 );//old is 50
 
         string pcd_save_dir_name;
         nh.param<int>( "if_save_to_pcd_files", m_if_save_to_pcd_files, 0 );
@@ -374,7 +378,7 @@ class Laser_mapping
         //if_undistore = 0;
         if ( MOTION_DEBLUR == 0 || if_undistore == 0 || interpolate_s == 1.0 )
         {
-            //printf("deb\n");
+            //printf("deb %d %d %f\n", MOTION_DEBLUR, if_undistore, interpolate_s);
             point_w = m_q_w_curr * point_curr + m_t_w_curr;
         }
         else
@@ -382,7 +386,7 @@ class Laser_mapping
 
             if ( interpolate_s > 1.0 || interpolate_s < 0.0 )
             {
-                //printf( "Input interpolate_s = %.5f\r\n", interpolate_s );
+                ROS_WARN( "Input interpolate_s = %.5f\r\n", interpolate_s );
                 //assert( interpolate_s <= 1.0 && interpolate_s >= 0.0 );
             }
 
@@ -616,7 +620,7 @@ class Laser_mapping
                 m_minimum_pt_time_stamp = m_last_time_stamp;
                 m_maximum_pt_time_stamp = max_t;
                 m_last_time_stamp = max_t;
-                reset_incremtal_parameter();
+                reset_incremtal_parameter();//m_para_buffer_incremental， m_q_w_incre ， m_t_w_incre初始化为 0
 
                 //100 * 100 * 100的 CUBE， 每个CUBE长宽高都是 50 米
                 //为什么要 加上 m_para_laser_cloud_center_width 这个数值,这是因为计算索引都是正整数，需要统一向右平移50个 CUBE，也即2500米
@@ -875,12 +879,15 @@ class Laser_mapping
                 pcl::PointCloud<PointType>::Ptr laserCloudCornerStack( new pcl::PointCloud<PointType>() );
                 m_down_sample_filter_corner.setInputCloud( m_laser_cloud_corner_last );
                 m_down_sample_filter_corner.filter( *laserCloudCornerStack );
+                //laserCloudCornerStack = m_laser_cloud_corner_last;
                 int laser_corner_pt_num = laserCloudCornerStack->points.size();
+
 
                 //对最新数据帧中的平面点 滤波
                 pcl::PointCloud<PointType>::Ptr laserCloudSurfStack( new pcl::PointCloud<PointType>() );
                 m_down_sample_filter_surface.setInputCloud( m_laser_cloud_surf_last );
                 m_down_sample_filter_surface.filter( *laserCloudSurfStack );
+                //laserCloudSurfStack = m_laser_cloud_surf_last;
                 int laser_surface_pt_num = laserCloudSurfStack->points.size();
 
                 printf( "map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum );
@@ -913,23 +920,35 @@ class Laser_mapping
                         corner_rejection_num = 0;
                         surface_rejecetion_num = 0;
 
-                        ceres::LossFunction *               loss_function = new ceres::HuberLoss( 0.1 );
+                        ceres::LossFunction *               loss_function = new ceres::HuberLoss( 0.1 );//Huber Loss 是一个用于回归问题的带参损失函数, 优点是能增强平方误差损失函数(MSE, mean square error)对离群点的鲁棒性。
                         ceres::LocalParameterization *      q_parameterization = new ceres::EigenQuaternionParameterization();
                         ceres::Problem::Options             problem_options;
                         ceres::ResidualBlockId              block_id;
                         ceres::Problem                      problem( problem_options );
                         std::vector<ceres::ResidualBlockId> residual_block_ids;
 
-                        problem.AddParameterBlock( m_para_buffer_incremental, 4, q_parameterization );
-                        problem.AddParameterBlock( m_para_buffer_incremental + 4, 3 );
+                        problem.AddParameterBlock( m_para_buffer_incremental, 4, q_parameterization );//前四个参数为旋转四元数(R)
+                        problem.AddParameterBlock( m_para_buffer_incremental + 4, 3 );//后三个参数为平移参数(T)
 
                         //计算角点残茶
                         for ( int i = 0; i < laser_corner_pt_num; i++ )
                         {
                             pointOri = laserCloudCornerStack->points[ i ];
                             //通过平移旋转消除 运动失真
-                            pointAssociateToMap( &pointOri, &pointSel, pointOri.intensity, if_undistore_in_matching );
+                            pointAssociateToMap( &pointOri, &pointSel, pointOri.intensity, 0/*if_undistore_in_matching*/ );//last parameter allways 1
 
+                            #if 1//点的顺序没错，因此时间戳在整帧中归一化之后还是对的
+                            static bool printflag_ = true;
+                            if(printflag_ && (i == 674))
+                            {
+                                printf("cornerid:%d ath:%f ele:%f int:%f total:%d\n", i, atan2(pointOri.y, pointOri.x)/3.1416 * 180, atan2(pointOri.z, sqrt(pointOri.x * pointOri.x + pointOri.y * pointOri.y))/3.1416 * 180,
+                                       pointOri.intensity, laser_corner_pt_num);
+                            }
+                            if(i == (laser_corner_pt_num - 1))
+                            {
+                                printflag_ = false;
+                            }
+                            #endif
                             //在MAP中寻找5个最近邻点
                             m_kdtree_corner_from_map->nearestKSearch( pointSel, line_search_num, m_point_search_Idx, m_point_search_sq_dis );
 
@@ -939,7 +958,7 @@ class Laser_mapping
                                 bool                         line_is_avail = true;
                                 std::vector<Eigen::Vector3d> nearCorners;
                                 Eigen::Vector3d              center( 0, 0, 0 );
-                                if ( /*IF_LINE_FEATURE_CHECK*/ 1 )//邻近点是否在近似一条线上
+                                if ( /*IF_LINE_FEATURE_CHECK*/ 1 )//根据5个邻近点的特征值判断 这五个近邻点首否近似一条直线
                                 {
                                     for ( int j = 0; j < line_search_num; j++ )
                                     {
@@ -950,22 +969,22 @@ class Laser_mapping
                                         nearCorners.push_back( tmp );
                                     }
 
-                                    center = center / ( ( float ) line_search_num );
+                                    center = center / ( ( float ) line_search_num );//五个邻近点的重心
 
                                     Eigen::Matrix3d covMat = Eigen::Matrix3d::Zero();
 
                                     for ( int j = 0; j < line_search_num; j++ )
                                     {
-                                        Eigen::Matrix<double, 3, 1> tmpZeroMean = nearCorners[ j ] - center;
-                                        covMat = covMat + tmpZeroMean * tmpZeroMean.transpose();
+                                        Eigen::Matrix<double, 3, 1> tmpZeroMean = nearCorners[ j ] - center;//五个邻近点的重心和邻近点组成的向量
+                                        covMat = covMat + tmpZeroMean * tmpZeroMean.transpose();//五个向量的协方差矩阵的和
                                     }
 
-                                    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes( covMat );
+                                    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes( covMat );//特征值
 
                                     // if is indeed line feature
                                     // note Eigen library sort eigenvalues in increasing order
 
-                                    if ( saes.eigenvalues()[ 2 ] > 3 * saes.eigenvalues()[ 1 ] )
+                                    if ( saes.eigenvalues()[ 2 ] > 3 * saes.eigenvalues()[ 1 ] )//最大特征值 大于 次大特征值的3倍 则认为是线条
                                     {
                                         line_is_avail = true;
                                     }
@@ -977,17 +996,17 @@ class Laser_mapping
 
                                 Eigen::Vector3d curr_point( pointOri.x, pointOri.y, pointOri.z );
 
-                                if ( line_is_avail )
+                                if ( line_is_avail )//近邻点组成了直线
                                 {
                                     if ( ICP_LINE )// 1
                                     {
                                         ceres::CostFunction *cost_function;
-                                        if ( MOTION_DEBLUR )// 1
+                                        if ( MOTION_DEBLUR )// 1, 是否运动补偿
                                         {
-                                            cost_function = ceres_icp_point2line<double>::Create( curr_point,
+                                            cost_function = ceres_icp_point2line<double>::Create( curr_point,//原始激光雷达坐标系中的点
                                                                                                   pcl_pt_to_eigend( m_laser_cloud_corner_from_map->points[ m_point_search_Idx[ 0 ] ] ),
                                                                                                   pcl_pt_to_eigend( m_laser_cloud_corner_from_map->points[ m_point_search_Idx[ 1 ] ] ),
-                                                                                                  pointOri.intensity * 1.0,
+                                                                                                  1.0, //pointOri.intensity * 1.0,
                                                                                                   Eigen::Matrix<double, 4, 1>( m_q_w_last.w(), m_q_w_last.x(), m_q_w_last.y(), m_q_w_last.z() ),
                                                                                                   m_t_w_last ); //pointOri.intensity );
                                         }
@@ -1000,7 +1019,7 @@ class Laser_mapping
                                                                                                   Eigen::Matrix<double, 4, 1>( m_q_w_last.w(), m_q_w_last.x(), m_q_w_last.y(), m_q_w_last.z() ),
                                                                                                   m_t_w_last );
                                         }
-                                        block_id = problem.AddResidualBlock( cost_function, loss_function, m_para_buffer_incremental, m_para_buffer_incremental + 4 );
+                                        block_id = problem.AddResidualBlock( cost_function, loss_function, m_para_buffer_incremental, m_para_buffer_incremental + 4 );//cost, loss, 初始旋转参数， 初始平移参数
                                         residual_block_ids.push_back( block_id );
                                     }
                                     corner_avail_num++;
@@ -1018,7 +1037,7 @@ class Laser_mapping
 
                             pointOri = laserCloudSurfStack->points[ i ];
                             int planeValid = true;
-                            pointAssociateToMap( &pointOri, &pointSel, pointOri.intensity, if_undistore_in_matching );
+                            pointAssociateToMap( &pointOri, &pointSel, pointOri.intensity, 0/*if_undistore_in_matching*/ );//last parameter allways 1
 
                             //5个最近邻平面点
                             m_kdtree_surf_from_map->nearestKSearch( pointSel, plane_search_num, m_point_search_Idx, m_point_search_sq_dis );
@@ -1045,12 +1064,12 @@ class Laser_mapping
                                     for ( int j = 0; j < plane_search_num; j++ )
                                     {
                                         Eigen::Matrix<double, 3, 1> tmpZeroMean = nearCorners[ j ] - center;
-                                        covMat = covMat + tmpZeroMean * tmpZeroMean.transpose();
+                                        covMat = covMat + tmpZeroMean * tmpZeroMean.transpose();//协方差矩阵之和
                                     }
 
                                     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes( covMat );
 
-                                    if ( ( saes.eigenvalues()[ 2 ] > 3 * saes.eigenvalues()[ 0 ] ) &&
+                                    if ( ( saes.eigenvalues()[ 2 ] > 3 * saes.eigenvalues()[ 0 ] ) &&//最大特征值 是 最小特征值的3倍， 并且最大特征值 小于次大特征值的 10 倍
                                          ( saes.eigenvalues()[ 2 ] < 10 * saes.eigenvalues()[ 1 ] ) )
                                     {
                                         planeValid = true;
@@ -1071,13 +1090,12 @@ class Laser_mapping
 
                                         if ( MOTION_DEBLUR )//1
                                         {
-
                                             cost_function = ceres_icp_point2plane<double>::Create(
                                                 curr_point,
                                                 pcl_pt_to_eigend( m_laser_cloud_surf_from_map->points[ m_point_search_Idx[ 0 ] ] ),
                                                 pcl_pt_to_eigend( m_laser_cloud_surf_from_map->points[ m_point_search_Idx[ plane_search_num / 2 ] ] ),
                                                 pcl_pt_to_eigend( m_laser_cloud_surf_from_map->points[ m_point_search_Idx[ plane_search_num - 1 ] ] ),
-                                                pointOri.intensity * BLUR_SCALE,
+                                                1.0, //pointOri.intensity * BLUR_SCALE,
                                                 Eigen::Matrix<double, 4, 1>( m_q_w_last.w(), m_q_w_last.x(), m_q_w_last.y(), m_q_w_last.z() ),
                                                 m_t_w_last ); //pointOri.intensity );
                                         }
@@ -1127,16 +1145,17 @@ class Laser_mapping
                                     problem.SetParameterBlockConstant( m_para_buffer_incremental );
                             }
 
-                            set_ceres_solver_bound( problem );
+                            set_ceres_solver_bound( problem );//平移限制在相邻两帧数据不超过0.2米(10m/s  /  50Hz)
 
-                            double bef_solver = ros::Time::now().toSec();
+                            //double bef_solver = ros::Time::now().toSec();
                             ceres::Solve( options, &problem, &summary );
-                            printf("sol1[%f]", ros::Time::now().toSec() - bef_solver);
+                            //printf("sol1[%f]", ros::Time::now().toSec() - bef_solver);
 
                             // Remove outliers
                             residual_block_ids_bak.clear();
 
                             //if ( summary.final_cost > m_max_final_cost * 0.001 )
+                            //评估残差点， 删除残差较大的点（移除残差绝对值之和 大于 std::min( 0.1, 10 * avr_cost ) 的点）
                             if ( 1 )
                             {
                                 ceres::Problem::EvaluateOptions eval_options;
@@ -1145,7 +1164,7 @@ class Laser_mapping
                                 double         avr_cost;
                                 vector<double> residuals;
                                 problem.Evaluate( eval_options, &total_cost, &residuals, nullptr, nullptr );
-                                avr_cost = total_cost / residual_block_ids.size();
+                                avr_cost = total_cost / residual_block_ids.size();//平均cost值
 
                                 for ( unsigned int i = 0; i < residual_block_ids.size(); i++ )
                                 {
@@ -1163,7 +1182,7 @@ class Laser_mapping
                             residual_block_ids = residual_block_ids_bak;
                         }
                         options.max_num_iterations = m_para_cere_max_iterations;//5
-                        set_ceres_solver_bound( problem );
+                        set_ceres_solver_bound( problem );// 平移限制在相邻两帧数据不超过0.2米(10m/s  /  50Hz)
 
                         //double bef_solver_2 = ros::Time::now().toSec();
                         ceres::Solve( options, &problem, &summary );
@@ -1171,11 +1190,11 @@ class Laser_mapping
 
                         if ( MOTION_DEBLUR )
                         {
-                            compute_interpolatation_rodrigue( m_q_w_incre, m_interpolatation_omega, m_interpolatation_theta, m_interpolatation_omega_hat );
-                            m_interpolatation_omega_hat_sq2 = m_interpolatation_omega_hat * m_interpolatation_omega_hat;
+                            //compute_interpolatation_rodrigue( m_q_w_incre, m_interpolatation_omega, m_interpolatation_theta, m_interpolatation_omega_hat );
+                            //m_interpolatation_omega_hat_sq2 = m_interpolatation_omega_hat * m_interpolatation_omega_hat;
                         }
-                        m_t_w_curr = m_q_w_last * m_t_w_incre + m_t_w_last;
-                        m_q_w_curr = m_q_w_last * m_q_w_incre;
+                        m_t_w_curr = m_q_w_last * m_t_w_incre + m_t_w_last;//MAP坐标系中的平移, m_q_w_las将在下一帧数据开始迭代之前置为 m_q_w_curr
+                        m_q_w_curr = m_q_w_last * m_q_w_incre;//MAP坐标系中的旋转，m_t_w_last 将在下一帧数据开始迭代之前置为 m_t_w_curr
 
                         // *( g_file_logger.get_ostream() ) << "Res: " << summary.BriefReport() << endl;
 
@@ -1203,6 +1222,8 @@ class Laser_mapping
                     m_file_logger.printf( "Motion blur = %d | ", MOTION_DEBLUR );
                     m_file_logger.printf( "Cost = %.2f| blk_size = %d | corner_num = %d | surf_num = %d | angle dis = %.2f | T dis = %.2f \r\n",
                                           minimize_cost, summary.num_residual_blocks, corner_avail_num, surf_avail_num, angular_diff, t_diff );
+
+                    //计算值不合理，不采用
                     if ( angular_diff > m_para_max_angular_rate || minimize_cost > m_max_final_cost )
                     {
                         *( m_file_logger.get_ostream() ) << "**** Reject update **** " << endl;
@@ -1225,21 +1246,21 @@ class Laser_mapping
 
                 double iterator_end_time_f = ros::Time::now().toSec();
 
-                if ( PUB_DEBUG_INFO )
+                if ( 1/*!PUB_DEBUG_INFO*/ )
                 {
                     pcl::PointCloud<PointType> pc_feature_pub_corners, pc_feature_pub_surface;
                     sensor_msgs::PointCloud2   laserCloudMsg;
 
-                    pointcloudAssociateToMap( *m_laser_cloud_surf_last, pc_feature_pub_surface, g_if_undistore );
+                    pointcloudAssociateToMap( *m_laser_cloud_surf_last, pc_feature_pub_surface, 0/*g_if_undistore*/ );
                     pcl::toROSMsg( pc_feature_pub_surface, laserCloudMsg );
                     laserCloudMsg.header.stamp = ros::Time().fromSec( m_time_odom );
                     laserCloudMsg.header.frame_id = "/camera_init";
                     m_pub_last_surface_pts.publish( laserCloudMsg );
-                    pointcloudAssociateToMap( *m_laser_cloud_corner_last, pc_feature_pub_corners, g_if_undistore );
+                    pointcloudAssociateToMap( *m_laser_cloud_corner_last, pc_feature_pub_corners, 0/*g_if_undistore*/ );
                     pcl::toROSMsg( pc_feature_pub_corners, laserCloudMsg );
                     laserCloudMsg.header.stamp = ros::Time().fromSec( m_time_odom );
                     laserCloudMsg.header.frame_id = "/camera_init";
-                    m_pub_last_corner_pts.publish( laserCloudMsg );
+                    m_pub_last_corner_pts.publish( laserCloudMsg );//feature corners
                 }
 
                 //对每个角点计算点的cube 编号，然后将点放入 cube中
@@ -1247,7 +1268,7 @@ class Laser_mapping
                 {
                     //if ( MOTION_DEBLUR && ( laserCloudSurfStack->points[ i ].intensity < m_para_min_match_blur ) )
                     //*( m_file_logger.get_ostream() ) << __FILE__ << " --- " << __LINE__ << endl;
-                    pointAssociateToMap( &laserCloudCornerStack->points[ i ], &pointSel, laserCloudCornerStack->points[ i ].intensity, g_if_undistore );
+                    pointAssociateToMap( &laserCloudCornerStack->points[ i ], &pointSel, laserCloudCornerStack->points[ i ].intensity, 0/*g_if_undistore*/ );
 
                     int cubeI = int( ( pointSel.x + CUBE_W / 2 ) / CUBE_W ) + m_para_laser_cloud_center_width;
                     int cubeJ = int( ( pointSel.y + CUBE_H / 2 ) / CUBE_H ) + m_para_laser_cloud_center_height;
@@ -1275,7 +1296,7 @@ class Laser_mapping
                 for ( int i = 0; i < laser_surface_pt_num; i++ )
                 {
                     //*( m_file_logger.get_ostream() ) << __FILE__ << " --- " << __LINE__ << endl;
-                    pointAssociateToMap( &laserCloudSurfStack->points[ i ], &pointSel, laserCloudSurfStack->points[ i ].intensity, g_if_undistore);
+                    pointAssociateToMap( &laserCloudSurfStack->points[ i ], &pointSel, laserCloudSurfStack->points[ i ].intensity, 0/*g_if_undistore*/);
 
                     int cubeI = int( ( pointSel.x + CUBE_W / 2 ) / CUBE_W ) + m_para_laser_cloud_center_width;
                     int cubeJ = int( ( pointSel.y + CUBE_H / 2 ) / CUBE_H ) + m_para_laser_cloud_center_height;
@@ -1364,18 +1385,34 @@ class Laser_mapping
                         laserCloudMsg.header.stamp = ros::Time().fromSec( m_time_odom );
                         laserCloudMsg.header.frame_id = "/camera_init";
                         m_pub_laser_cloud_map.publish( laserCloudMsg );
+                        m_file_logger.printf("publish lasermappoints %d\n", laserCloudMap.size());
                     }
                 }
 
                 //配准到全局坐标系之后发布出去
                 int laserCloudFullResNum = m_laser_cloud_full_res->points.size();
 
-                //差值计算每个点的偏移数量
+                compute_interpolatation_rodrigue( m_q_w_incre, m_interpolatation_omega, m_interpolatation_theta, m_interpolatation_omega_hat );
+                m_interpolatation_omega_hat_sq2 = m_interpolatation_omega_hat * m_interpolatation_omega_hat;
+
+                static bool print_once = true;
+                static FILE *ptest = NULL;
+                //插值计算每个点的偏移数量
                 for ( int i = 0; i < laserCloudFullResNum; i++ )
                 {
+                    if(print_once)
+                    {
+                        //if(ptest)
+                          //  fprintf(ptest, );
+                        float angle = atan2( m_laser_cloud_full_res->points[ i ].y, m_laser_cloud_full_res->points[ i ].x );
+                        angle = angle * 180 / 3.1416;
+                        m_file_logger.printf("%d %f %f\n", i, angle, m_laser_cloud_full_res->points[ i ].intensity);
+                    }
                     pointAssociateToMap( &m_laser_cloud_full_res->points[ i ], &m_laser_cloud_full_res->points[ i ], m_laser_cloud_full_res->points[ i ].intensity, 1 );
                 }
-
+                print_once = false;
+                //printf
+                #if 0
                 static int printflag = true;
                 FILE *p = NULL;
                 if(printflag)
@@ -1393,6 +1430,14 @@ class Laser_mapping
                     printflag = false;
                     fclose(p);
                 }
+                #endif
+                //endprint
+
+                pcl::UniformSampling<PointType> filter;
+                filter.setInputCloud(m_laser_cloud_full_res);
+                filter.setRadiusSearch(m_map_downsample_para);
+                filter.filter(*m_laser_cloud_full_res);
+                printf("after fileter %d\n", m_laser_cloud_full_res->points.size());
 
                 sensor_msgs::PointCloud2 laserCloudFullRes3;
                 pcl::toROSMsg( *m_laser_cloud_full_res, laserCloudFullRes3 );
@@ -1412,7 +1457,8 @@ class Laser_mapping
                 nav_msgs::Odometry odomAftMapped;
                 odomAftMapped.header.frame_id = "/camera_init";
                 odomAftMapped.child_frame_id = "/aft_mapped";
-                odomAftMapped.header.stamp = ros::Time().fromSec( m_time_odom );
+                //odomAftMapped.header.stamp = ros::Time().fromSec( m_time_odom );
+                odomAftMapped.header.stamp = ros::Time::now();
                 if ( 1 )
                 {
                     odomAftMapped.pose.pose.orientation.x = m_q_w_curr.x();

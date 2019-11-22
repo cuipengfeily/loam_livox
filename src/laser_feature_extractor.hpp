@@ -77,7 +77,7 @@ class Laser_feature
 
     int m_if_pub_debug_feature = 1;
 
-    const int   m_para_system_delay = 2;
+    const int   m_para_system_delay = 20;
     int         m_para_system_init_count = 0;
     bool        m_para_systemInited = false;
     float       m_pc_curvature[ 400000 ];
@@ -122,7 +122,8 @@ class Laser_feature
     {
         ros::NodeHandle nh;
         m_init_timestamp = ros::Time::now();
-        init_livox_lidar_para();
+        //init_livox_lidar_para();
+        init_zvision_lidar_para();
 
         nh.param<int>( "scan_line", m_laser_scan_number, 16 );
         nh.param<float>( "mapping_plane_resolution", m_plane_resolution, 0.8 );
@@ -288,14 +289,26 @@ class Laser_feature
                 temp_out_msg.header.frame_id = "/camera_init";
                 m_pub_pc_livox_surface.publish( temp_out_msg );
 
+                //pcl::PointCloud<PointType> corner_tmp = *livox_corners;
+                //pcl::PointCloud<PointType> corner_tmp2;
+
                 m_voxel_filter_for_corner.setInputCloud( livox_corners );
                 m_voxel_filter_for_corner.filter( *livox_corners );
                 pcl::toROSMsg( *livox_corners, temp_out_msg );
+                //m_voxel_filter_for_corner.filter( corner_tmp2 );
+
                 temp_out_msg.header.stamp = current_time;
                 temp_out_msg.header.frame_id = "/camera_init";
                 m_pub_pc_livox_corners.publish( temp_out_msg );
 
-                //printf("cnt: %d %d %d\n", livox_corners->size(), livox_surface->size(), livox_full->size());
+                printf("cnt: %d %d %d\n", livox_corners->size(), livox_surface->size(), livox_full->size());
+                #if 0
+                if(675 == livox_corners->size())
+                    {
+                    printf("-------------------%d %f\n", 675, livox_corners->points[674].intensity);
+                }
+                #endif
+
                 #if 0
                 for ( int i = 0; i < piece_wise; i++ )
                 {
@@ -880,6 +893,54 @@ class Laser_feature
         if ( ros::param::get( "livox_min_dis", m_zvision.m_zvision_min_allow_dis ) )
         {
             std::cout << "Set livox lidar minimum distance= " << m_zvision.m_zvision_min_allow_dis << std::endl;
+        }
+
+        if ( ros::param::get( "livox_min_sigma", m_zvision.m_zvision_min_sigma ) )
+        {
+            std::cout << "Set livox lidar minimum sigama =  " << m_zvision.m_zvision_min_sigma << std::endl;
+        }
+        std::cout << "~~~~~ End ~~~~~" << endl;
+    }
+
+    void init_zvision_lidar_para()
+    {
+        std::string lidar_tpye_name;
+        std::cout << "~~~~~ Init zvision lidar parameters ~~~~~" << endl;
+        if ( ros::param::get( "lidar_type", lidar_tpye_name ) )
+        {
+            printf( "***** I get lidar_type declaration, lidar_type_name = %s ***** \r\n", lidar_tpye_name.c_str() );
+
+            if ( lidar_tpye_name.compare( "livox" ) == 0 )
+            {
+                m_lidar_type = 1;
+                std::cout << "Set lidar type = livox" << std::endl;
+            }
+            else if( lidar_tpye_name.compare( "velodyne" ) == 0 )
+            {
+                std::cout << "Set lidar type = velodyne" << std::endl;
+                m_lidar_type = 0;
+            }
+            else
+            {
+                std::cout << "Set lidar type = " << lidar_tpye_name << std::endl;
+                m_lidar_type = 2;
+            }
+        }
+        else
+        {
+            printf( "***** No lidar_type declaration ***** \r\n" );
+            m_lidar_type = 0;
+            std::cout << "Set lidar type = velodyne" << std::endl;
+        }
+
+        if ( ros::param::get( "zvision_min_dis", m_zvision.m_zvision_min_allow_dis ) )
+        {
+            std::cout << "Set zvision lidar minimum distance= " << m_zvision.m_zvision_min_allow_dis << std::endl;
+        }
+
+        if ( ros::param::get( "zvision_max_dis", m_zvision.m_zvision_max_allow_dis ) )
+        {
+            std::cout << "Set zvision lidar minimum distance= " << m_zvision.m_zvision_max_allow_dis << std::endl;
         }
 
         if ( ros::param::get( "livox_min_sigma", m_zvision.m_zvision_min_sigma ) )

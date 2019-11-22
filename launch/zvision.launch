@@ -17,8 +17,8 @@
     <param name="mapping_plane_resolution" type="double" value="0.4"/>
     <param name="livox_min_sigma" type="double" value="7e-4"/>
     <param name="livox_min_dis" type="double" value="0.1"/>
-    <param name="corner_curvature" type="double" value="0.20"/>
-    <param name="surface_curvature" type="double" value="0.002"/>
+    <param name="corner_curvature" type="double" value="0.01"/>
+    <param name="surface_curvature" type="double" value="0.00002"/>
     <param name="minimum_view_angle" type="double" value="5"/>
     <!--Parameters for optimization-->
     <param name="max_allow_incre_R" type="double" value="20.0"/>
@@ -26,7 +26,10 @@
     <param name="max_allow_final_cost" type="double" value="1.0"/>
     <param name="icp_maximum_iteration" type="int" value="6"/>
     <param name="ceres_maximum_iteration" type="int" value="100"/>
-    <param name="mapping_init_accumulate_frames" type="int" value="10"/>
+    <param name="mapping_init_accumulate_frames" type="int" value="5"/>
+    <param name="zvision_min_dis" type="double" value="2.0"/>
+    <param name="zvision_max_dis" type="double" value="15.0"/>
+    <param name="mapping_downsample_para" type="double" value="0.05"/>
 
     <param name="if_motion_deblur" type="int" value="0"/>
     <param name="odom_mode" type="int" value="1"/>   <!--0 = odom, 1 = mapping-->

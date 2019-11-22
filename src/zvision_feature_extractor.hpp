@@ -166,6 +166,7 @@ class Zvision_laser
 
     float m_zvision_min_allow_dis = 1.0;
     float m_zvision_min_sigma = 7e-3;
+    float m_zvision_max_allow_dis = 15.0;
 
     std::vector< pcl::PointCloud< pcl::PointXYZI > > m_last_laser_scan;
 
@@ -233,6 +234,7 @@ class Zvision_laser
             end_idx = 29999;
         }
 
+        //printf("vecsize : %d\n", m_pts_info_vec.size());
         int pt_critical_rm_mask = e_pt_000 | e_pt_nan;
         for ( size_t i = 0; i < m_pts_info_vec.size(); i++ )
         {
@@ -256,7 +258,15 @@ class Zvision_laser
                         //set_intensity( pc_corners.points[ corner_num ], e_I_motion_blur );
                         //pc_corners.points[ corner_num ].intensity = m_pts_info_vec[ i ].time_stamp;
                         pc_corners.points[ corner_num ].intensity = ((point_id % 10000) * 3 + (point_id / 10000)) / 29999.0;//强度阈 为点的ID除以点的总数，便于计算点的时间点
+#if 0
+                        if(((674 == corner_num)) || (18551 == point_id))
+                            {
+                            printf("printf:%d %d %f\n", corner_num, point_id, pc_corners.points[ corner_num ].intensity);
+                            //printf("printf:%d %d %f\n", corner_num,18551, pc_corners.points[ corner_num ].intensity);
+                        }
+#endif
                         corner_num++;
+
                     }
                 }
                 if ( m_pts_info_vec[ i ].pt_label & e_label_surface )
@@ -283,6 +293,7 @@ class Zvision_laser
         pc_corners.resize(corner_num);
         pc_surface.resize(surface_num);
         pc_full_res.resize(full_num);
+        printf("printf:conersize:%d surfsize:%d\n", corner_num, surface_num);
     }
 
 
@@ -413,6 +424,13 @@ class Zvision_laser
         if ( pt_info->depth_sq2 < m_zvision_min_allow_dis * m_zvision_min_allow_dis ) // to close
         {
             //cout << "Add mask, id  = " << idx << "  type = e_too_near" << endl;
+            add_mask_of_point( pt_info, e_pt_too_near );
+        }
+
+        if ( pt_info->depth_sq2 > m_zvision_max_allow_dis * m_zvision_max_allow_dis ) // to close
+        {
+            //cout << "Add mask, id  = " << idx << "  type = e_too_near" << endl;
+            //printf("#############too far\n");
             add_mask_of_point( pt_info, e_pt_too_near );
         }
 
@@ -566,8 +584,14 @@ class Zvision_laser
                     // if ( abs( m_pts_info_vec[ idx ].view_angle - m_pts_info_vec[ idx + curvature_ssd_size ].view_angle ) > edge_angle_diff ||
                     //      abs( m_pts_info_vec[ idx ].view_angle - m_pts_info_vec[ idx - curvature_ssd_size ].view_angle ) > edge_angle_diff )
                     {
-                        if ( m_pts_info_vec[ idx ].depth_sq2 <= m_pts_info_vec[ idx - curvature_ssd_size ].depth_sq2 && //这样的点 \/
-                             m_pts_info_vec[ idx ].depth_sq2 <= m_pts_info_vec[ idx + curvature_ssd_size ].depth_sq2 )
+                        if ( (m_pts_info_vec[ idx ].depth_sq2 <= m_pts_info_vec[ idx - curvature_ssd_size ].depth_sq2 && //这样的点 \/
+                             m_pts_info_vec[ idx ].depth_sq2 <= m_pts_info_vec[ idx + curvature_ssd_size ].depth_sq2)
+                             #if 0
+                             ||
+                                                         (m_pts_info_vec[ idx ].depth_sq2 >= m_pts_info_vec[ idx - curvature_ssd_size ].depth_sq2 && //这样的点 /\..
+                                                                                      m_pts_info_vec[ idx ].depth_sq2 >= m_pts_info_vec[ idx + curvature_ssd_size ].depth_sq2)
+                             #endif
+                             )
                         {
                             //距离平方与左右两侧差两个点位的点的距离平方不超过0.1
                             if ( abs( m_pts_info_vec[ idx ].depth_sq2 - m_pts_info_vec[ idx - curvature_ssd_size ].depth_sq2 ) < sq2_diff * m_pts_info_vec[ idx ].depth_sq2 ||//距离平方与左右两侧差两个点位的点
